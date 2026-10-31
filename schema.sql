@@ -3,25 +3,39 @@
 -- Run this in your Supabase project: SQL Editor → New query → Run
 -- ============================================================
 
--- Kids: one row per child in the apartment building
+-- Kids: one row per flat; name stays NULL until a child registers
 create table if not exists public.kids (
   id            uuid primary key default gen_random_uuid(),
-  name          text not null,
+  name          text,
   apartment_no  text not null,
   created_at    timestamptz not null default now()
 );
 
+-- If the table already exists with name NOT NULL, migrate it once:
+--   alter table public.kids alter column name drop not null;
+
 -- Books: one row per book in the shared library
+-- status: Available → Reserved (handover code issued) → Borrowed → Available
 create table if not exists public.books (
   id           uuid primary key default gen_random_uuid(),
   title        text not null,
   author       text,
   status       text not null default 'Available'
-               check (status in ('Available', 'Borrowed')),
+               check (status in ('Available', 'Reserved', 'Borrowed')),
   borrowed_by  uuid references public.kids (id) on delete set null,
+  owner_id     uuid references public.kids (id) on delete set null,
   loan_date    date,
+  borrow_code  text,
   created_at   timestamptz not null default now()
 );
+
+-- If the table already exists, migrate it once:
+--   alter table public.books add column if not exists borrow_code text;
+--   alter table public.books add column if not exists owner_id uuid
+--     references public.kids (id) on delete set null;
+--   alter table public.books drop constraint if exists books_status_check;
+--   alter table public.books add constraint books_status_check
+--     check (status in ('Available', 'Reserved', 'Borrowed'));
 
 -- Indexes for the two lookups the app does most
 create index if not exists books_status_idx      on public.books (status);
