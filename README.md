@@ -9,9 +9,11 @@ Built with **Streamlit** (UI) and **Supabase** (PostgreSQL database).
 2. **Add Books** — type or paste books into a table; they're owned by your flat.
 3. **Borrow** — pick a book from *another* flat (you can't borrow your own);
    first-timers add their name. Reserving shows a 6-character handover code.
-4. **Return** — bring back a book your flat borrowed.
+4. **Return** — bring back a book your flat borrowed. Starting a return shows a
+   6-character return code; the book stays on loan until the owner confirms.
 5. **My Books** — the lender enters the borrower's handover code here (in their
-   own account) to complete the borrowing, and tracks their flat's books.
+   own account) to complete the borrowing, enters the return code to confirm a
+   book is back, and tracks their flat's books.
 
 Changing the library (adding books, borrowing, returning, setting names) needs a
 per-flat login: the user ID is your flat number (e.g. `4-Lavender-1C`) and the
@@ -64,4 +66,4 @@ The app opens at http://localhost:8501 — share it on the apartment Wi-Fi with
 | Table  | Columns |
 |--------|---------|
 | `kids`  | `id` (uuid, PK), `name`, `apartment_no`, `created_at` |
-| `books` | `id` (uuid, PK), `title`, `author`, `status` (`Available`/`Reserved`/`Borrowed`), `borrowed_by` (FK → `kids.id`, `ON DELETE SET NULL`), `owner_id` (FK → `kids.id`, `ON DELETE SET NULL`), `loan_date`, `borrow_code`, `created_at` |
+| `books` | `id` (uuid, PK), `title`, `author`, `status` (`Available`/`Reserved`/`Borrowed`/`Returning`), `borrowed_by` (FK → `kids.id`, `ON DELETE SET NULL`), `owner_id` (FK → `kids.id`, `ON DELETE SET NULL`), `loan_date`, `borrow_code` (handover code for both borrowing and returning), `created_at` |

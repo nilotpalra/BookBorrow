@@ -15,13 +15,14 @@ create table if not exists public.kids (
 --   alter table public.kids alter column name drop not null;
 
 -- Books: one row per book in the shared library
--- status: Available → Reserved (handover code issued) → Borrowed → Available
+-- status: Available → Reserved (borrow code issued) → Borrowed
+--         → Returning (return code issued) → Available
 create table if not exists public.books (
   id           uuid primary key default gen_random_uuid(),
   title        text not null,
   author       text,
   status       text not null default 'Available'
-               check (status in ('Available', 'Reserved', 'Borrowed')),
+               check (status in ('Available', 'Reserved', 'Borrowed', 'Returning')),
   borrowed_by  uuid references public.kids (id) on delete set null,
   owner_id     uuid references public.kids (id) on delete set null,
   loan_date    date,
@@ -35,7 +36,7 @@ create table if not exists public.books (
 --     references public.kids (id) on delete set null;
 --   alter table public.books drop constraint if exists books_status_check;
 --   alter table public.books add constraint books_status_check
---     check (status in ('Available', 'Reserved', 'Borrowed'));
+--     check (status in ('Available', 'Reserved', 'Borrowed', 'Returning'));
 
 -- Indexes for the two lookups the app does most
 create index if not exists books_status_idx      on public.books (status);

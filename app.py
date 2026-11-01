@@ -2,6 +2,7 @@ import datetime as dt
 import re
 import secrets
 import string
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -97,7 +98,7 @@ def load_books() -> list[dict]:
     return res.data
 
 
-def new_borrow_code() -> str:
+def new_handover_code() -> str:
     # 6 chars, no easily-confused 0/O or 1/I/L — simple but not guessable
     alphabet = string.ascii_uppercase.replace("O", "").replace("I", "").replace("L", "") + "23456789"
     return "".join(secrets.choice(alphabet) for _ in range(6))
@@ -126,10 +127,22 @@ def cancel_reservation(book_id: str) -> None:
     ).eq("id", book_id).execute()
 
 
-def return_book(book_id: str) -> None:
+def initiate_return(book_id: str, code: str) -> None:
+    supabase.table("books").update({"status": "Returning", "borrow_code": code}).eq(
+        "id", book_id
+    ).execute()
+
+
+def confirm_return(book_id: str) -> None:
     supabase.table("books").update(
         {"status": "Available", "borrowed_by": None, "loan_date": None, "borrow_code": None}
     ).eq("id", book_id).execute()
+
+
+def cancel_return(book_id: str) -> None:
+    supabase.table("books").update({"status": "Borrowed", "borrow_code": None}).eq(
+        "id", book_id
+    ).execute()
 
 
 def set_kid_name(kid_id: str, name: str) -> None:
@@ -154,10 +167,12 @@ kid_names = {k["id"]: k for k in kids}
 available = [b for b in books if b["status"] == "Available"]
 reserved = [b for b in books if b["status"] == "Reserved"]
 borrowed = [b for b in books if b["status"] == "Borrowed"]
+returning = [b for b in books if b["status"] == "Returning"]
 my_kid = next((k for k in kids if k["id"] == st.session_state.get("kid_id")), None)
 
 st.title("BookBorrow")
 st.caption("Dream Residency Manor community library")
+st.image(str(Path(__file__).parent / "AppImage.png"), width=600)
 
 # ---------------- Sidebar: login & name registration ----------------
 with st.sidebar:
@@ -290,7 +305,7 @@ with tab_borrow:
                             if not my_kid["name"]:
                                 set_kid_name(my_kid["id"], name.strip())
                                 my_kid["name"] = name.strip()
-                            code = new_borrow_code()
+                            code = new_handover_code()
                             reserve_book(book["id"], my_kid["id"], loan_date, code)
                             st.session_state["pending_loan"] = {
                                 "book_id": book["id"],
@@ -299,29 +314,43 @@ with tab_borrow:
                             }
                             st.rerun()
 
-# Screen 4: return a book (only books borrowed by your flat)
+# Screen 4: return a book (two steps: initiate → owner confirms with return code)
 with tab_return:
     st.header("Return a book")
     if not require_login():
         pass
     else:
         my_borrowed = [b for b in borrowed if b["borrowed_by"] == my_kid["id"]]
-        if not my_borrowed:
+        my_returning = [b for b in returning if b["borrowed_by"] == my_kid["id"]]
+        if not my_borrowed and not my_returning:
             st.info("Your flat has no books on loan.", icon=":material/info:")
         else:
-            with st.form("return_form"):
-                book = st.selectbox(
-                    "Book",
-                    my_borrowed,
-                    format_func=lambda b: (
-                        f"{b['title']} — flat {flat_of(b.get('owner_id'))}"
-                        + (f", borrowed on {b['loan_date']}" if b["loan_date"] else "")
-                    ),
+            for b in my_returning:
+                # Step 2: the owner enters the code in their own login (My Books tab)
+                st.subheader(f"Return “{b['title']}”")
+                st.info(
+                    "Share this code with the resident receiving the book. They enter it "
+                    "in their own account, under the **My Books** tab, to complete the return.",
+                    icon=":material/key:",
                 )
-                if st.form_submit_button("Return book", icon=":material/assignment_return:", use_container_width=True):
-                    return_book(book["id"])
-                    st.success(f"“{book['title']}” has been returned.", icon=":material/check_circle:")
+                st.code(b["borrow_code"], language=None)
+                if st.button("Cancel return", key=f"cancel_return_{b['id']}", icon=":material/cancel:", use_container_width=True):
+                    cancel_return(b["id"])
                     st.rerun()
+            if my_borrowed:
+                # Step 1: initiate the return — generates the handover code for the owner
+                with st.form("return_form"):
+                    book = st.selectbox(
+                        "Book",
+                        my_borrowed,
+                        format_func=lambda b: (
+                            f"{b['title']} — flat {flat_of(b.get('owner_id'))}"
+                            + (f", borrowed on {b['loan_date']}" if b["loan_date"] else "")
+                        ),
+                    )
+                    if st.form_submit_button("Return book", icon=":material/assignment_return:", use_container_width=True):
+                        initiate_return(book["id"], new_handover_code())
+                        st.rerun()
 
 # Screen 5: my books — lender confirms handovers, tracks own books
 with tab_mine:
@@ -331,6 +360,7 @@ with tab_mine:
     else:
         my_books = [b for b in books if b.get("owner_id") == my_kid["id"]]
         my_reserved = [b for b in my_books if b["status"] == "Reserved"]
+        my_returns = [b for b in my_books if b["status"] == "Returning"]
         my_lent = [b for b in my_books if b["status"] == "Borrowed"]
         my_shelf = [b for b in my_books if b["status"] == "Available"]
 
@@ -355,6 +385,30 @@ with tab_mine:
                         st.error("The code does not match. Please check it with the borrower.", icon=":material/error:")
                 elif cancel:
                     cancel_reservation(b["id"])
+                    st.rerun()
+            st.divider()
+
+        if my_returns:
+            st.subheader("Confirm return")
+            for b in my_returns:
+                with st.form(f"confirm_return_{b['id']}"):
+                    st.write(
+                        f"**{b['title']}** — {name_of(b['borrowed_by'])} "
+                        f"(flat {flat_of(b['borrowed_by'])}) is returning it"
+                    )
+                    entered = st.text_input("Return code", key=f"rcode_{b['id']}", icon=":material/key:").strip().upper()
+                    c1, c2 = st.columns(2)
+                    confirm = c1.form_submit_button("Confirm", icon=":material/check:", use_container_width=True)
+                    cancel = c2.form_submit_button("Not received", icon=":material/close:", use_container_width=True)
+                if confirm:
+                    if entered and entered == (b["borrow_code"] or ""):
+                        confirm_return(b["id"])
+                        st.success(f"“{b['title']}” is back on your shelf.", icon=":material/check_circle:")
+                        st.rerun()
+                    else:
+                        st.error("The code does not match. Please check it with the borrower.", icon=":material/error:")
+                elif cancel:
+                    cancel_return(b["id"])
                     st.rerun()
             st.divider()
 
